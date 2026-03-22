@@ -1,0 +1,218 @@
+{{/*
+  KrishiMitra Backend — Kubernetes Deployment
+  Includes: Deployment, Service, HPA, PDB, ServiceMonitor
+*/}}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-backend
+    version: {{ .Values.image.tag | quote }}
+    environment: {{ .Values.environment }}
+spec:
+  replicas: {{ .Values.replicaCount.backend }}
+  selector:
+    matchLabels:
+      app: krishimitra-backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge:       1
+      maxUnavailable: 0     # zero-downtime deployment
+  template:
+    metadata:
+      labels:
+        app:     krishimitra-backend
+        version: {{ .Values.image.tag | quote }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path:   /actuator/prometheus
+        prometheus.io/port:   "8080"
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ .Release.Name }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser:    1001
+        fsGroup:      1001
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: backend
+          image: {{ .Values.global.imageRegistry }}/{{ .Values.global.imageOwner }}/krishimitra-backend:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: {{ .Values.environment }}
+            - name: DB_URL
+              value: jdbc:postgresql://{{ .Values.postgresql.host }}:{{ .Values.postgresql.port }}/{{ .Values.postgresql.database }}
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: postgres-user
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: postgres-password
+            - name: REDIS_HOST
+              value: {{ .Values.redis.host }}
+            - name: REDIS_PORT
+              value: {{ .Values.redis.port | quote }}
+            - name: REDIS_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: redis-password
+            - name: KAFKA_BROKERS
+              value: {{ .Values.kafka.brokers }}
+            - name: ML_ENGINE_URL
+              value: http://{{ .Release.Name }}-ml:8003
+            - name: LLM_ENGINE_URL
+              value: http://{{ .Release.Name }}-llm:8001
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: jwt-secret
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: openai-api-key
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: anthropic-api-key
+                  optional: true
+            - name: DATAGOV_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: datagov-api-key
+                  optional: true
+            - name: JAVA_OPTS
+              value: >-
+                -Xms512m -Xmx{{ (index .Values.resources.backend.limits "memory") }}
+                -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+                -Djava.security.egd=file:/dev/./urandom
+          resources:
+            {{- toYaml .Values.resources.backend | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            failureThreshold: 30
+            periodSeconds:    5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds:       10
+            failureThreshold:    3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds:       5
+            failureThreshold:    3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]    # drain connections before SIGTERM
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-backend
+spec:
+  selector:
+    app: krishimitra-backend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Release.Name }}-backend-hpa
+  namespace: {{ .Release.Namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Release.Name }}-backend
+  minReplicas: {{ .Values.autoscaling.backend.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.backend.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type:               Utilization
+          averageUtilization: {{ .Values.autoscaling.backend.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type:               Utilization
+          averageUtilization: {{ .Values.autoscaling.backend.targetMemoryUtilizationPercentage }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300    # wait 5min before scaling down
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-backend-pdb
+  namespace: {{ .Release.Namespace }}
+spec:
+  maxUnavailable: {{ .Values.podDisruptionBudget.backend.maxUnavailable }}
+  selector:
+    matchLabels:
+      app: krishimitra-backend
+
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: krishimitra-backend
+  endpoints:
+    - port:     http
+      path:     /actuator/prometheus
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+{{- end }}

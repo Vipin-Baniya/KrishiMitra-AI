@@ -1,0 +1,51 @@
+# KrishiMitra ML Engine — Python dependencies
+# GPU training: pip install torch --extra-index-url https://download.pytorch.org/whl/cu121
+# CPU only:     pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
+
+# ── PyTorch ───────────────────────────────────────────────────
+torch==2.3.1
+torchvision==0.18.1
+
+# ── Time-series & statistics ──────────────────────────────────
+statsmodels==0.14.2
+pmdarima==2.0.4             # auto-ARIMA
+scipy==1.13.1
+
+# ── Gradient boosting ─────────────────────────────────────────
+xgboost==2.1.1
+optuna==3.6.1               # hyperparameter tuning
+optuna-integration==3.6.0
+
+# ── Explainability ────────────────────────────────────────────
+shap==0.45.1
+
+# ── Data processing ───────────────────────────────────────────
+pandas==2.2.2
+numpy==1.26.4
+pyarrow==17.0.0
+scikit-learn==1.5.1
+
+# ── Feature engineering ───────────────────────────────────────
+holidays==0.52               # Indian public holidays
+
+# ── Serving ───────────────────────────────────────────────────
+fastapi==0.112.1
+uvicorn[standard]==0.30.6
+pydantic==2.8.2
+redis[asyncio]==5.0.8
+prometheus-client==0.20.0
+
+# ── MLflow ────────────────────────────────────────────────────
+mlflow==2.15.1
+
+# ── HTTP / data fetching ──────────────────────────────────────
+requests==2.32.3
+httpx==0.27.0
+pyyaml==6.0.2
+tqdm==4.66.5
+
+# ── Dev & testing ─────────────────────────────────────────────
+pytest==8.3.2
+pytest-asyncio==0.23.8
+black==24.8.0
+ruff==0.6.1

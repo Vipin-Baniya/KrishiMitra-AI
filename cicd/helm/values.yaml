@@ -1,0 +1,104 @@
+# ================================================================
+#  KrishiMitra Helm Chart — values.yaml
+#  Covers: backend, ml-engine, llm-server, frontend, ingress
+# ================================================================
+
+# Global settings
+global:
+  imageRegistry: ghcr.io
+  imageOwner:    krishimitra-ai
+  imagePullSecrets: [regcred]
+
+image:
+  tag:        latest
+  pullPolicy: IfNotPresent
+
+environment: production
+
+# ── Replica counts ────────────────────────────────────────────
+replicaCount:
+  backend:   3
+  ml:        2
+  llm:       2
+  frontend:  2
+
+# ── Resource requests/limits ──────────────────────────────────
+resources:
+  backend:
+    requests: { cpu: 500m, memory: 768Mi }
+    limits:   { cpu: "2",  memory: 1.5Gi }
+  ml:
+    requests: { cpu: "1",  memory: 2Gi }
+    limits:   { cpu: "4",  memory: 6Gi }
+  llm:
+    requests: { cpu: 500m, memory: 512Mi }
+    limits:   { cpu: "2",  memory: 2Gi }
+  frontend:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+
+# ── Autoscaling ───────────────────────────────────────────────
+autoscaling:
+  backend:
+    enabled:     true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage:    70
+    targetMemoryUtilizationPercentage: 80
+  ml:
+    enabled:     true
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage:    75
+
+# ── Ingress ───────────────────────────────────────────────────
+ingress:
+  enabled:     true
+  className:   nginx
+  host:        krishimitra.in
+  tls:
+    enabled:   true
+    secretName: krishimitra-tls
+  annotations:
+    cert-manager.io/cluster-issuer:            letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect:  "true"
+    nginx.ingress.kubernetes.io/rate-limit:    "60"
+
+# ── External secrets (Kubernetes secrets) ─────────────────────
+secrets:
+  existingSecret: krishimitra-secrets   # pre-created in cluster
+
+# ── PostgreSQL (external — use managed RDS/Cloud SQL in prod) ─
+postgresql:
+  external: true
+  host:     ${POSTGRES_HOST}
+  port:     5432
+  database: krishimitra
+
+# ── Redis (external — use ElastiCache/Memorystore in prod) ────
+redis:
+  external: true
+  host:     ${REDIS_HOST}
+  port:     6379
+
+# ── Kafka (external — use MSK/Confluent Cloud in prod) ────────
+kafka:
+  brokers: ${KAFKA_BROKERS}
+
+# ── Monitoring ────────────────────────────────────────────────
+monitoring:
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+
+# ── Pod disruption budgets ────────────────────────────────────
+podDisruptionBudget:
+  backend:
+    maxUnavailable: 1
+  ml:
+    maxUnavailable: 1
+
+# ── Node affinity ─────────────────────────────────────────────
+nodeSelector: {}
+tolerations:  []
+affinity:     {}

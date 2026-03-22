@@ -1,0 +1,39 @@
+{
+  "name": "krishimitra-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "lint": "eslint src --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0",
+    "recharts": "^2.12.7",
+    "axios": "^1.7.3",
+    "react-query": "^3.39.3",
+    "zustand": "^4.5.4",
+    "react-hook-form": "^7.52.2",
+    "zod": "^3.23.8",
+    "@hookform/resolvers": "^3.9.0",
+    "react-hot-toast": "^2.4.1",
+    "date-fns": "^3.6.0",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.414.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.4",
+    "vitest": "^2.0.4",
+    "eslint": "^9.7.0",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.40"
+  }
+}

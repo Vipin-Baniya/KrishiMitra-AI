@@ -1,0 +1,331 @@
+# ================================================================
+#  KrishiMitra AI — Complete Integration Stack
+#  All 5 services wired together end-to-end
+#
+#  Services:
+#    - PostgreSQL + Redis + Kafka (infrastructure)
+#    - krishimitra-backend (Spring Boot :8080)
+#    - krishimitra-ml (Python FastAPI :8003)
+#    - krishimitra-llm (Python FastAPI :8001 — vLLM router)
+#    - krishimitra-frontend (React Vite :3000)
+#    - krishimitra-monitoring (Prometheus + Grafana)
+#    - nginx (reverse proxy — single entry point :80 / :443)
+#
+#  Start:   docker compose up -d
+#  Logs:    docker compose logs -f krishimitra-backend
+#  Down:    docker compose down -v
+# ================================================================
+
+version: "3.9"
+
+x-common-env: &common-env
+  TZ: Asia/Kolkata
+  ENVIRONMENT: production
+
+x-backend-healthcheck: &backend-hc
+  interval: 20s
+  timeout: 8s
+  retries: 5
+  start_period: 60s
+
+networks:
+  internal:         # backend ↔ infra — never exposed
+    driver: bridge
+  frontend-net:     # nginx ↔ frontend ↔ backend
+    driver: bridge
+  monitoring-net:   # prometheus scrape targets
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  kafka-data:
+  zookeeper-data:
+  ml-models:
+  llm-models:
+  prometheus-data:
+  grafana-data:
+  nginx-certs:
+
+services:
+
+  # ════════════════════════════════════════════════════════════
+  #  INFRASTRUCTURE LAYER
+  # ════════════════════════════════════════════════════════════
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: km-postgres
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      POSTGRES_DB:       krishimitra
+      POSTGRES_USER:     krishimitra
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-krishimitra_secret}
+      PGDATA:            /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./integration/scripts/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U krishimitra -d krishimitra"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    command: >
+      postgres
+        -c max_connections=200
+        -c shared_buffers=256MB
+        -c effective_cache_size=768MB
+        -c work_mem=4MB
+        -c maintenance_work_mem=64MB
+        -c wal_buffers=16MB
+        -c checkpoint_completion_target=0.9
+        -c log_min_duration_statement=1000
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: km-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+        --maxmemory 512mb
+        --maxmemory-policy allkeys-lru
+        --requirepass ${REDIS_PASSWORD:-redis_secret}
+        --appendonly yes
+        --appendfsync everysec
+    volumes:
+      - redis-data:/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_secret}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.7.0
+    container_name: km-zookeeper
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME:   2000
+      ZOOKEEPER_MAX_CLIENT_CNXNS: 60
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.7.0
+    container_name: km-kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper: { condition: service_healthy }
+    environment:
+      <<: *common-env
+      KAFKA_BROKER_ID:                      1
+      KAFKA_ZOOKEEPER_CONNECT:              zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS:           PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS:            24
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE:      "true"
+      KAFKA_NUM_PARTITIONS:                 3
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Kafka topic initialisation (runs once and exits)
+  kafka-init:
+    image: confluentinc/cp-kafka:7.7.0
+    container_name: km-kafka-init
+    depends_on:
+      kafka: { condition: service_healthy }
+    networks: [internal]
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      "
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic krishimitra.price-updates  --partitions 6 --replication-factor 1 --config retention.ms=86400000
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic krishimitra.sell-alerts   --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic krishimitra.price-ingested --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic krishimitra.model-retrain  --partitions 1 --replication-factor 1
+      echo 'Kafka topics created.'
+      "
+
+  # ════════════════════════════════════════════════════════════
+  #  APPLICATION LAYER
+  # ════════════════════════════════════════════════════════════
+
+  krishimitra-backend:
+    build:
+      context: ../../krishimitra-backend
+      dockerfile: Dockerfile
+      target: production
+    image: krishimitra/backend:${IMAGE_TAG:-latest}
+    container_name: km-backend
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+      kafka:    { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+    environment:
+      <<: *common-env
+      SPRING_PROFILES_ACTIVE:       prod
+      DB_URL:                       jdbc:postgresql://postgres:5432/krishimitra
+      DB_USER:                      krishimitra
+      DB_PASS:                      ${POSTGRES_PASSWORD:-krishimitra_secret}
+      REDIS_HOST:                   redis
+      REDIS_PORT:                   6379
+      REDIS_PASS:                   ${REDIS_PASSWORD:-redis_secret}
+      KAFKA_BROKERS:                kafka:9092
+      ML_ENGINE_URL:                http://krishimitra-ml:8003
+      LLM_ENGINE_URL:               http://krishimitra-llm:8001
+      JWT_SECRET:                   ${JWT_SECRET:?JWT_SECRET env var is required}
+      DATAGOV_API_KEY:              ${DATAGOV_API_KEY:-}
+      OPENAI_API_KEY:               ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY:            ${ANTHROPIC_API_KEY:-}
+      JAVA_OPTS: >-
+        -Xms512m -Xmx1024m
+        -XX:+UseG1GC
+        -XX:MaxGCPauseMillis=200
+        -Dspring.security.filter.order=10
+    ports:
+      - "8080:8080"
+    networks: [internal, frontend-net, monitoring-net]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      <<: *backend-hc
+
+  krishimitra-ml:
+    build:
+      context: ../../krishimitra-ml
+      dockerfile: Dockerfile
+      target: production
+    image: krishimitra/ml-engine:${IMAGE_TAG:-latest}
+    container_name: km-ml
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      REDIS_URL:       redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
+      DATAGOV_API_KEY: ${DATAGOV_API_KEY:-}
+      WANDB_API_KEY:   ${WANDB_API_KEY:-}
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ml-models:/app/models/registry
+    networks: [internal, monitoring-net]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  krishimitra-llm:
+    build:
+      context: ../../krishimitra-llm
+      dockerfile: Dockerfile.serving
+    image: krishimitra/llm-server:${IMAGE_TAG:-latest}
+    container_name: km-llm
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      VLLM_URL:          http://km-vllm:8002      # optional vLLM sidecar
+      OPENAI_API_KEY:    ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      PYTHONUNBUFFERED:  "1"
+    networks: [internal, monitoring-net]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 20s
+      timeout: 8s
+      retries: 5
+      start_period: 20s
+
+  krishimitra-frontend:
+    build:
+      context: ../../krishimitra-frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ""    # empty = relative, nginx proxies /api → backend
+    image: krishimitra/frontend:${IMAGE_TAG:-latest}
+    container_name: km-frontend
+    restart: unless-stopped
+    networks: [frontend-net]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ════════════════════════════════════════════════════════════
+  #  NGINX REVERSE PROXY  (single public entry point)
+  # ════════════════════════════════════════════════════════════
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: km-nginx
+    restart: unless-stopped
+    depends_on:
+      krishimitra-backend:  { condition: service_healthy }
+      krishimitra-frontend: { condition: service_healthy }
+    volumes:
+      - ./integration/config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx-certs:/etc/nginx/certs
+    ports:
+      - "80:80"
+      - "443:443"
+    networks: [frontend-net]
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ════════════════════════════════════════════════════════════
+  #  MONITORING (condensed — full stack in monitoring compose)
+  # ════════════════════════════════════════════════════════════
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: km-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ../../krishimitra-monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../krishimitra-monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    networks: [monitoring-net]
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: km-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-krishimitra}
+      GF_USERS_ALLOW_SIGN_UP:     "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../../krishimitra-monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../krishimitra-monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    networks: [monitoring-net]
+    depends_on: [prometheus]

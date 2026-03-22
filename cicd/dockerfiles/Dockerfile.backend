@@ -1,0 +1,47 @@
+# ================================================================
+#  KrishiMitra Backend — Production Dockerfile
+#  Multi-stage: Maven build → Slim JRE runtime
+# ================================================================
+
+# ── Stage 1: Build ───────────────────────────────────────────
+FROM eclipse-temurin:21-jdk-alpine AS builder
+WORKDIR /build
+
+# Cache dependencies first (layer cache optimisation)
+COPY pom.xml .
+COPY .mvn .mvn
+COPY mvnw .
+RUN chmod +x mvnw && ./mvnw dependency:go-offline -q
+
+# Build application
+COPY src src
+RUN ./mvnw package -DskipTests -q
+
+# Extract layers for optimised Docker caching
+RUN java -Djarmode=layertools -jar target/*.jar extract
+
+# ── Stage 2: Runtime ─────────────────────────────────────────
+FROM eclipse-temurin:21-jre-alpine AS production
+WORKDIR /app
+
+# Security: run as non-root
+RUN addgroup -g 1001 -S krishimitra && \
+    adduser  -u 1001 -S krishimitra -G krishimitra
+USER krishimitra
+
+# Copy exploded JAR layers (fastest Docker cache reuse)
+COPY --from=builder --chown=krishimitra:krishimitra /build/dependencies/          ./
+COPY --from=builder --chown=krishimitra:krishimitra /build/spring-boot-loader/    ./
+COPY --from=builder --chown=krishimitra:krishimitra /build/snapshot-dependencies/ ./
+COPY --from=builder --chown=krishimitra:krishimitra /build/application/           ./
+
+# Health probe
+RUN apk add --no-cache curl
+
+EXPOSE 8080
+
+ENV JAVA_OPTS="-Xms512m -Xmx1024m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 \
+               -Djava.security.egd=file:/dev/./urandom \
+               -Dspring.profiles.active=prod"
+
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS org.springframework.boot.loader.launch.JarLauncher"]
