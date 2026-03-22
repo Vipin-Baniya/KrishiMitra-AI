@@ -1,0 +1,153 @@
+# ================================================================
+#  Alertmanager Configuration — KrishiMitra
+#  Routes: critical → PagerDuty + Slack #critical
+#          warning  → Slack #warnings
+#          info     → Slack #info
+#          business → Slack #product + email
+# ================================================================
+
+global:
+  resolve_timeout: 5m
+  slack_api_url:   ${SLACK_WEBHOOK_URL}
+  smtp_smarthost:  ${SMTP_HOST:-localhost:587}
+  smtp_from:       alerts@krishimitra.in
+  smtp_auth_username: ${SMTP_USER}
+  smtp_auth_password: ${SMTP_PASSWORD}
+
+# ── Inhibit rules ─────────────────────────────────────────────
+inhibit_rules:
+  # If backend is down, silence all downstream warnings
+  - source_match:
+      alertname: BackendDown
+    target_match_re:
+      alertname: (BackendHighLatency|BackendHighErrorRate|BackendDbConnectionPoolExhausted)
+    equal: [environment]
+
+  # If ML engine is down, silence fallback rate alert
+  - source_match:
+      alertname: MlEngineDown
+    target_match:
+      alertname: MlHighFallbackRate
+    equal: [environment]
+
+# ── Templates ─────────────────────────────────────────────────
+templates:
+  - /etc/alertmanager/templates/*.tmpl
+
+# ── Routing tree ──────────────────────────────────────────────
+route:
+  receiver:        slack-warnings
+  group_by:        [alertname, environment, team]
+  group_wait:      30s
+  group_interval:  5m
+  repeat_interval: 4h
+
+  routes:
+    # Critical → PagerDuty + Slack #critical (immediate)
+    - match:
+        severity: critical
+      receiver: critical
+      group_wait:      0s
+      group_interval:  1m
+      repeat_interval: 30m
+      continue: false
+
+    # Business KPI alerts → product team Slack + email
+    - match:
+        team: product
+      receiver: product-team
+      repeat_interval: 6h
+
+    # ML team alerts
+    - match:
+        team: ml
+      receiver: ml-team
+      repeat_interval: 2h
+
+    # Warning
+    - match:
+        severity: warning
+      receiver: slack-warnings
+      repeat_interval: 2h
+
+    # Info — low noise
+    - match:
+        severity: info
+      receiver: slack-info
+      repeat_interval: 24h
+
+# ── Receivers ─────────────────────────────────────────────────
+receivers:
+
+  - name: critical
+    slack_configs:
+      - channel:      "#krishimitra-critical"
+        icon_emoji:   ":fire:"
+        color:        "danger"
+        title:        '[CRITICAL] {{ .GroupLabels.alertname }}'
+        text: |
+          *Environment:* {{ .GroupLabels.environment }}
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Started:* {{ .StartsAt | since }}
+          {{ if .Annotations.runbook }}*Runbook:* {{ .Annotations.runbook }}{{ end }}
+          {{ end }}
+        send_resolved: true
+    pagerduty_configs:
+      - service_key:  ${PAGERDUTY_SERVICE_KEY}
+        description:  '{{ .GroupLabels.alertname }}: {{ .CommonAnnotations.summary }}'
+        severity:     critical
+        details:
+          firing:      '{{ .Alerts.Firing | len }}'
+          description: '{{ .CommonAnnotations.description }}'
+    email_configs:
+      - to:           oncall@krishimitra.in
+        subject:      '[CRITICAL] {{ .GroupLabels.alertname }}'
+        body:         '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+  - name: slack-warnings
+    slack_configs:
+      - channel:    "#krishimitra-alerts"
+        icon_emoji: ":warning:"
+        color:      "warning"
+        title:      '[WARNING] {{ .GroupLabels.alertname }}'
+        text: |
+          *Team:* {{ .GroupLabels.team }}
+          {{ range .Alerts }}
+          *Summary:* {{ .Annotations.summary }}
+          *Details:* {{ .Annotations.description }}
+          {{ end }}
+        send_resolved: true
+
+  - name: ml-team
+    slack_configs:
+      - channel:    "#krishimitra-ml-ops"
+        icon_emoji: ":robot_face:"
+        title:      '[ML] {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *{{ .Labels.severity | toUpper }}* — {{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}
+        send_resolved: true
+
+  - name: product-team
+    slack_configs:
+      - channel:    "#krishimitra-product"
+        icon_emoji: ":bar_chart:"
+        title:      '[PRODUCT] {{ .GroupLabels.alertname }}'
+        text:       '{{ .CommonAnnotations.summary }}: {{ .CommonAnnotations.description }}'
+        send_resolved: false
+    email_configs:
+      - to:      product@krishimitra.in
+        subject: '[KPI Alert] {{ .GroupLabels.alertname }}'
+        body:    '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+  - name: slack-info
+    slack_configs:
+      - channel:    "#krishimitra-info"
+        icon_emoji: ":information_source:"
+        title:      '[INFO] {{ .GroupLabels.alertname }}'
+        text:       '{{ .CommonAnnotations.summary }}'
+        send_resolved: false

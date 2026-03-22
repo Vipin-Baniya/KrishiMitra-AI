@@ -1,0 +1,79 @@
+# ================================================================
+#  Backend Alert Rules
+# ================================================================
+groups:
+
+  - name: krishimitra_backend
+    interval: 30s
+    rules:
+
+      - alert: BackendDown
+        expr: up{job="krishimitra-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team:     backend
+        annotations:
+          summary:     "KrishiMitra backend is DOWN"
+          description: "Spring Boot backend has been unreachable for >1 minute."
+          runbook:     "https://wiki.krishimitra.in/runbooks/backend-down"
+
+      - alert: BackendHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            rate(http_server_requests_seconds_bucket{job="krishimitra-backend"}[5m])
+          ) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+          team:     backend
+        annotations:
+          summary:     "Backend p95 latency > 2s"
+          description: "95th percentile API latency is {{ $value | humanizeDuration }}."
+
+      - alert: BackendHighErrorRate
+        expr: |
+          rate(http_server_requests_seconds_count{job="krishimitra-backend",status=~"5.."}[5m])
+          /
+          rate(http_server_requests_seconds_count{job="krishimitra-backend"}[5m])
+          > 0.05
+        for: 3m
+        labels:
+          severity: critical
+          team:     backend
+        annotations:
+          summary:     "Backend error rate > 5%"
+          description: "{{ $value | humanizePercentage }} of requests are returning 5xx errors."
+
+      - alert: BackendJvmHeapHigh
+        expr: |
+          jvm_memory_used_bytes{job="krishimitra-backend",area="heap"}
+          / jvm_memory_max_bytes{job="krishimitra-backend",area="heap"}
+          > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          team:     backend
+        annotations:
+          summary:     "JVM heap usage > 85%"
+          description: "Heap is {{ $value | humanizePercentage }} full — GC pressure likely."
+
+      - alert: BackendDbConnectionPoolExhausted
+        expr: hikaricp_connections_pending{job="krishimitra-backend"} > 5
+        for: 2m
+        labels:
+          severity: warning
+          team:     backend
+        annotations:
+          summary:     "HikariCP connection pool under pressure"
+          description: "{{ $value }} threads are waiting for a DB connection."
+
+      - alert: KafkaConsumerLag
+        expr: kafka_consumer_group_lag{group="krishimitra-backend"} > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team:     backend
+        annotations:
+          summary:     "Kafka consumer lag is high"
+          description: "Consumer group krishimitra-backend lag: {{ $value }} messages."

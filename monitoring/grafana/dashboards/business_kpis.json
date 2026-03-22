@@ -1,0 +1,120 @@
+{
+  "uid": "krishimitra-business",
+  "title": "KrishiMitra — Business KPIs",
+  "description": "Farmer activity, price predictions, sell advice usage, AI chat volume",
+  "tags": ["krishimitra", "business", "kpi"],
+  "refresh": "5m",
+  "time": { "from": "now-24h", "to": "now" },
+  "timezone": "Asia/Kolkata",
+  "schemaVersion": 39,
+  "panels": [
+
+    {
+      "id": 1, "type": "stat", "title": "Total Farmers (all time)",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "fixedColor": "green", "mode": "fixed" } } },
+      "targets": [{ "expr": "krishimitra_farmers_total", "legendFormat": "farmers" }]
+    },
+    {
+      "id": 2, "type": "stat", "title": "New Registrations (24h)",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "fixedColor": "blue", "mode": "fixed" } } },
+      "targets": [{ "expr": "increase(krishimitra_farmer_registrations_total[24h])", "legendFormat": "new farmers" }]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Active Farmers (24h)",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "increase(krishimitra_farmer_logins_total[24h])", "legendFormat": "active" }]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Sell Advisories (24h)",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "fixedColor": "orange", "mode": "fixed" } } },
+      "targets": [{ "expr": "increase(krishimitra_sell_advisories_total[24h])", "legendFormat": "advisories" }]
+    },
+    {
+      "id": 5, "type": "stat", "title": "AI Chat Messages (24h)",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "increase(krishimitra_chat_messages_total[24h])", "legendFormat": "messages" }]
+    },
+    {
+      "id": 6, "type": "stat", "title": "Price Forecasts Served (24h)",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "increase(krishimitra_forecast_requests_total[24h])", "legendFormat": "forecasts" }]
+    },
+
+    {
+      "id": 10, "type": "timeseries", "title": "Daily Active Farmers (rolling 7d)",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 15 } } },
+      "targets": [
+        { "expr": "increase(krishimitra_farmer_logins_total[24h])", "legendFormat": "DAU" },
+        { "expr": "increase(krishimitra_farmer_logins_total[7d]) / 7", "legendFormat": "7d avg" }
+      ]
+    },
+
+    {
+      "id": 11, "type": "timeseries", "title": "Sell Decision Distribution",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "description": "Breakdown of SELL_NOW vs WAIT_N_DAYS vs HOLD advice given",
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 10 } } },
+      "targets": [
+        { "expr": "rate(krishimitra_sell_advisories_total{decision=\"SELL_NOW\"}[1h])", "legendFormat": "SELL NOW" },
+        { "expr": "rate(krishimitra_sell_advisories_total{decision=\"WAIT_N_DAYS\"}[1h])", "legendFormat": "WAIT" },
+        { "expr": "rate(krishimitra_sell_advisories_total{decision=\"HOLD\"}[1h])", "legendFormat": "HOLD" }
+      ]
+    },
+
+    {
+      "id": 20, "type": "bargauge", "title": "Top 10 Queried Commodities (24h)",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "options": { "orientation": "horizontal", "displayMode": "gradient" },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "expr": "topk(10, increase(krishimitra_price_queries_total[24h]))", "legendFormat": "{{commodity}}" }
+      ]
+    },
+
+    {
+      "id": 21, "type": "bargauge", "title": "Top 10 Queried Mandis (24h)",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "options": { "orientation": "horizontal", "displayMode": "gradient" },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "expr": "topk(10, increase(krishimitra_mandi_queries_total[24h]))", "legendFormat": "{{mandi}}" }
+      ]
+    },
+
+    {
+      "id": 30, "type": "timeseries", "title": "Agmarknet Ingestion — Records per Day",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 7 },
+      "description": "How many mandi price records were ingested each day",
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2 } } },
+      "targets": [
+        { "expr": "increase(krishimitra_agmarknet_records_ingested_total[24h])", "legendFormat": "records ingested" },
+        { "expr": "increase(krishimitra_agmarknet_ingest_errors_total[24h])", "legendFormat": "errors" }
+      ]
+    },
+
+    {
+      "id": 31, "type": "timeseries", "title": "LLM Chat — Language Distribution",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 7 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "targets": [
+        { "expr": "rate(krishimitra_chat_messages_total[1h])", "legendFormat": "{{language}}" }
+      ]
+    },
+
+    {
+      "id": 40, "type": "table", "title": "Alerts Fired (Last 24h)",
+      "gridPos": { "x": 0, "y": 27, "w": 24, "h": 8 },
+      "options": { "sortBy": [{ "displayName": "Count", "desc": true }] },
+      "targets": [
+        { "expr": "sort_desc(increase(ALERTS{alertstate=\"firing\"}[24h]) > 0)", "legendFormat": "{{alertname}}", "format": "table", "instant": true }
+      ]
+    }
+  ]
+}

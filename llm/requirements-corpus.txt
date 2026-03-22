@@ -1,0 +1,24 @@
+# ================================================================
+#  KrishiMitra LLM Corpus Builder — Python Dependencies
+#  Install: pip install -r requirements.txt
+# ================================================================
+
+# HTTP + data
+requests==2.32.3
+pandas==2.2.2
+pyarrow==16.1.0          # parquet caching for Agmarknet data
+tqdm==4.66.4             # progress bars
+
+# LLM expansion
+openai==1.35.13          # GPT-4o for QA augmentation
+
+# Utilities
+python-dotenv==1.0.1
+hashlib2==1.0.0          # already in stdlib, listed for clarity
+
+# ── Optional: for PDF parsing (MSP circulars) ─────────────────
+pdfplumber==0.11.1
+pymupdf==1.24.5          # fitz — faster alternative to pdfplumber
+
+# ── Optional: for deduplication quality ──────────────────────
+sentence-transformers==3.0.1   # semantic dedup beyond exact-match

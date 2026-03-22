@@ -1,0 +1,144 @@
+# ============================================================
+#  KrishiMitra AI — Custom LLM Fine-tuning Config
+#  Model: Mistral-7B-Instruct-v0.3 base (QLoRA fine-tune)
+#  Domain: Indian agriculture — price advisory, crop planning
+# ============================================================
+
+project:
+  name: "krishimitra-llm"
+  version: "1.0.0"
+  description: "Domain-specific agri LLM for Indian farmers"
+  language_support: ["en", "hi", "mr", "gu", "pa"]
+
+# ── BASE MODEL ────────────────────────────────────────────────
+base_model:
+  name: "mistralai/Mistral-7B-Instruct-v0.3"
+  # Alternatives tried (ranked by agri benchmark):
+  #   1. mistralai/Mistral-7B-Instruct-v0.3  ← chosen (best balance)
+  #   2. meta-llama/Meta-Llama-3-8B-Instruct  (good, larger memory)
+  #   3. google/gemma-2-9b-it                 (strong Hindi support)
+  tokenizer_padding_side: "right"
+  max_seq_length: 2048
+  dtype: "bfloat16"          # A100/H100; use float16 for older GPUs
+  load_in_4bit: true         # QLoRA — fits on single A100 40GB
+
+# ── QLORA CONFIG ──────────────────────────────────────────────
+lora:
+  r: 64                      # rank — higher = more params, better quality
+  lora_alpha: 128            # scaling = alpha/r; 2x rank is standard
+  lora_dropout: 0.05
+  bias: "none"
+  task_type: "CAUSAL_LM"
+  target_modules:            # Mistral attention + MLP projections
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  modules_to_save:           # retrain these fully (small, important)
+    - "embed_tokens"
+    - "lm_head"
+
+# ── TRAINING HYPERPARAMETERS ──────────────────────────────────
+training:
+  output_dir: "outputs/krishimitra-llm-v1"
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 8    # effective batch = 4 * 8 = 32
+  learning_rate: 2.0e-4
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  fp16: false
+  bf16: true
+  optim: "paged_adamw_8bit"         # memory-efficient
+  save_strategy: "steps"
+  save_steps: 200
+  eval_strategy: "steps"
+  eval_steps: 200
+  logging_steps: 25
+  load_best_model_at_end: true
+  metric_for_best_model: "eval_loss"
+  greater_is_better: false
+  report_to: ["wandb", "tensorboard"]
+  dataloader_num_workers: 4
+  remove_unused_columns: false
+  seed: 42
+
+# ── DATA ─────────────────────────────────────────────────────
+data:
+  train_file: "data/processed/train.jsonl"
+  val_file:   "data/processed/val.jsonl"
+  test_file:  "data/processed/test.jsonl"
+  # Raw sources (before processing)
+  raw_sources:
+    agmarknet_prices: "data/raw/agmarknet_prices.csv"
+    crop_advisory:    "data/raw/crop_advisory_qa.jsonl"
+    mandi_knowledge:  "data/raw/mandi_knowledge.jsonl"
+    synthetic_hindi:  "data/raw/synthetic_hindi_qa.jsonl"
+    govt_schemes:     "data/raw/govt_schemes.jsonl"
+  # Split ratios
+  train_ratio: 0.85
+  val_ratio:   0.10
+  test_ratio:  0.05
+  max_train_samples: null    # null = use all
+  max_val_samples: 1000
+
+# ── PROMPT FORMAT ─────────────────────────────────────────────
+prompt:
+  system_template: |
+    You are KrishiMitra AI, an expert agricultural advisor for Indian farmers.
+    You help with:
+    - Mandi price analysis and forecasting (₹/quintal)
+    - Optimal sell timing decisions
+    - Crop selection based on soil, season, and market demand
+    - Storage vs sell decisions
+    - Government scheme eligibility
+
+    Always respond in the farmer's language. Use ₹/quintal for prices.
+    Be concise, actionable, and specific. Use numbers when possible.
+  chat_template: "mistral"    # uses [INST]...[/INST] format
+  max_response_length: 512
+
+# ── EVALUATION ────────────────────────────────────────────────
+evaluation:
+  benchmarks:
+    - "agri_qa_hindi"          # custom Hindi agri QA benchmark
+    - "price_prediction_mae"   # mean absolute error on held-out prices
+    - "sell_advice_accuracy"   # % of correct SELL/WAIT decisions
+    - "language_coverage"      # BLEU on multilingual outputs
+  compare_against:
+    - "gpt-4o-mini"            # cost baseline
+    - "mistral-7b-base"        # pre-fine-tune baseline
+  eval_batch_size: 8
+  rouge_variants: ["rouge1", "rouge2", "rougeL"]
+
+# ── INFERENCE / SERVING ───────────────────────────────────────
+inference:
+  merged_model_dir: "outputs/krishimitra-llm-v1-merged"
+  quantized_model_dir: "outputs/krishimitra-llm-v1-gguf"
+  gguf_quantization: "Q4_K_M"        # for llama.cpp CPU serving
+  vllm_dtype: "bfloat16"
+  max_new_tokens: 512
+  temperature: 0.3                   # low for factual price answers
+  top_p: 0.9
+  repetition_penalty: 1.1
+  # Fallback thresholds
+  confidence_threshold: 0.72         # below → escalate to OpenAI
+  latency_timeout_ms: 3000           # exceed → escalate to OpenAI
+
+# ── WANDB ─────────────────────────────────────────────────────
+wandb:
+  project: "krishimitra-llm"
+  entity: "krishimitra-ai"
+  tags: ["qlora", "mistral-7b", "agri", "hindi"]
+
+# ── PATHS ─────────────────────────────────────────────────────
+paths:
+  cache_dir: ".cache/huggingface"
+  logs_dir: "logs"
+  checkpoints_dir: "outputs/checkpoints"

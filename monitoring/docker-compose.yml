@@ -1,0 +1,201 @@
+version: "3.9"
+
+# ================================================================
+#  KrishiMitra — Observability Stack
+#  Prometheus → Grafana → Alertmanager
+#  Loki (logs) · Tempo (traces) · Node/Postgres/Redis/Kafka exporters
+#
+#  Start:  docker compose up -d
+#  Grafana: http://localhost:3001  (admin / krishimitra)
+#  Prometheus: http://localhost:9090
+#  Alertmanager: http://localhost:9093
+# ================================================================
+
+networks:
+  monitoring:
+    driver: bridge
+  krishimitra:
+    external: true          # shared with app stack
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  tempo-data:
+  alertmanager-data:
+
+services:
+
+  # ── PROMETHEUS ───────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: krishimitra-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.retention.size=10GB
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+      - --web.enable-lifecycle               # allow config reload via POST /-/reload
+      - --web.enable-admin-api
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks: [monitoring, krishimitra]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── GRAFANA ──────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: krishimitra-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER:     admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-krishimitra}
+      GF_USERS_ALLOW_SIGN_UP:     "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_SERVER_ROOT_URL:         ${GRAFANA_ROOT_URL:-http://localhost:3001}
+      GF_SMTP_ENABLED:            ${SMTP_ENABLED:-false}
+      GF_SMTP_HOST:               ${SMTP_HOST:-}
+      GF_SMTP_USER:               ${SMTP_USER:-}
+      GF_SMTP_PASSWORD:           ${SMTP_PASSWORD:-}
+      GF_SMTP_FROM_ADDRESS:       alerts@krishimitra.in
+      GF_FEATURE_TOGGLES_ENABLE:  "publicDashboards"
+      GF_INSTALL_PLUGINS:         "grafana-clock-panel,grafana-worldmap-panel,grafana-piechart-panel,natel-discrete-panel"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    networks: [monitoring]
+    depends_on:
+      prometheus: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── ALERTMANAGER ─────────────────────────────────────────────
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: krishimitra-alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.listen-address=:9093
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "9093:9093"
+    networks: [monitoring]
+
+  # ── LOKI (log aggregation) ────────────────────────────────────
+  loki:
+    image: grafana/loki:3.1.0
+    container_name: krishimitra-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki.yml
+    volumes:
+      - ./loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    networks: [monitoring]
+
+  # ── PROMTAIL (log shipper) ────────────────────────────────────
+  promtail:
+    image: grafana/promtail:3.1.0
+    container_name: krishimitra-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail.yml
+    volumes:
+      - ./loki/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks: [monitoring, krishimitra]
+    depends_on: [loki]
+
+  # ── TEMPO (distributed tracing) ──────────────────────────────
+  tempo:
+    image: grafana/tempo:2.5.0
+    container_name: krishimitra-tempo
+    restart: unless-stopped
+    command: -config.file=/etc/tempo/tempo.yml
+    volumes:
+      - ./tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo-data:/tmp/tempo
+    ports:
+      - "3200:3200"    # Tempo HTTP
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+    networks: [monitoring, krishimitra]
+
+  # ── NODE EXPORTER (host metrics) ─────────────────────────────
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: krishimitra-node-exporter
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /:/host:ro,rslave
+    pid: host
+    networks: [monitoring]
+
+  # ── POSTGRES EXPORTER ─────────────────────────────────────────
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: krishimitra-pg-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: ${PG_EXPORTER_DSN:-postgresql://krishimitra:krishimitra@postgres:5432/krishimitra?sslmode=disable}
+    networks: [monitoring, krishimitra]
+
+  # ── REDIS EXPORTER ───────────────────────────────────────────
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: krishimitra-redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: ${REDIS_ADDR:-redis://redis:6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    networks: [monitoring, krishimitra]
+
+  # ── KAFKA EXPORTER ───────────────────────────────────────────
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: krishimitra-kafka-exporter
+    restart: unless-stopped
+    command:
+      - --kafka.server=${KAFKA_BROKERS:-kafka:9092}
+      - --topic.filter=krishimitra.*
+    networks: [monitoring, krishimitra]
+
+  # ── CADVISOR (container metrics) ─────────────────────────────
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: krishimitra-cadvisor
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    devices: ["/dev/kmsg"]
+    networks: [monitoring]

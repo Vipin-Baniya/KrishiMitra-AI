@@ -1,0 +1,97 @@
+# ================================================================
+#  Prometheus Configuration — KrishiMitra
+#  Scrapes: Spring Boot, ML Engine, LLM Server, Node, Postgres,
+#           Redis, Kafka, cAdvisor
+# ================================================================
+
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  scrape_timeout:      10s
+  external_labels:
+    environment: production
+    project:     krishimitra
+
+# ── Alert rules ───────────────────────────────────────────────
+rule_files:
+  - /etc/prometheus/rules/backend_alerts.yml
+  - /etc/prometheus/rules/ml_alerts.yml
+  - /etc/prometheus/rules/infra_alerts.yml
+  - /etc/prometheus/rules/business_alerts.yml
+
+# ── Alertmanager ──────────────────────────────────────────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+# ================================================================
+#  SCRAPE CONFIGS
+# ================================================================
+
+scrape_configs:
+
+  # ── Self ──────────────────────────────────────────────────────
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ── Spring Boot Backend ───────────────────────────────────────
+  - job_name: krishimitra-backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["krishimitra-backend:8080"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement:  backend
+
+  # ── Python ML Engine (FastAPI + Prometheus client) ────────────
+  - job_name: krishimitra-ml-engine
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["krishimitra-ml:8003"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement:  ml-engine
+
+  # ── LLM Inference Server ──────────────────────────────────────
+  - job_name: krishimitra-llm-server
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["krishimitra-llm:8001"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement:  llm-server
+
+  # ── Node Exporter (host) ──────────────────────────────────────
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # ── PostgreSQL ────────────────────────────────────────────────
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  # ── Redis ─────────────────────────────────────────────────────
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  # ── Kafka ─────────────────────────────────────────────────────
+  - job_name: kafka
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+
+  # ── cAdvisor (containers) ─────────────────────────────────────
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+    metric_relabel_configs:
+      # Drop high-cardinality metrics we don't need
+      - source_labels: [__name__]
+        regex: container_(network_tcp_usage_total|tasks_state|memory_failures_total)
+        action: drop

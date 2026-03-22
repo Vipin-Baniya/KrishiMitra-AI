@@ -1,0 +1,198 @@
+# ================================================================
+#  ML Engine Alert Rules
+# ================================================================
+groups:
+
+  - name: krishimitra_ml
+    interval: 60s
+    rules:
+
+      - alert: MlEngineDown
+        expr: up{job="krishimitra-ml-engine"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team:     ml
+        annotations:
+          summary:     "ML price prediction engine is DOWN"
+          description: "Farmers will not receive price forecasts until restored."
+
+      - alert: MlForecastLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            rate(krishimitra_ml_latency_seconds_bucket[5m])
+          ) > 5.0
+        for: 5m
+        labels:
+          severity: warning
+          team:     ml
+        annotations:
+          summary:     "ML forecast p95 latency > 5s"
+          description: "Forecast requests are taking {{ $value | humanizeDuration }} at p95."
+
+      - alert: MlHighFallbackRate
+        expr: |
+          rate(krishimitra_ml_fallbacks_total[10m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team:     ml
+        annotations:
+          summary:     "ML engine fallback rate elevated"
+          description: "More than 10% of requests are falling back to OpenAI/Claude."
+
+      - alert: LlmCustomModelDown
+        expr: |
+          rate(krishimitra_requests_total{model="custom",status="error"}[5m])
+          /
+          rate(krishimitra_requests_total{model="custom"}[5m])
+          > 0.5
+        for: 3m
+        labels:
+          severity: critical
+          team:     ml
+        annotations:
+          summary:     "Custom LLM model error rate > 50%"
+          description: "vLLM custom model is failing — all traffic routing to OpenAI/Claude."
+
+      - alert: GpuMemoryHigh
+        expr: |
+          nvidia_gpu_memory_used_bytes / nvidia_gpu_memory_total_bytes > 0.92
+        for: 5m
+        labels:
+          severity: warning
+          team:     ml
+        annotations:
+          summary:     "GPU memory usage > 92%"
+          description: "GPU {{ $labels.gpu }} at {{ $value | humanizePercentage }} memory — OOM risk."
+
+---
+# ================================================================
+#  Business KPI Alert Rules
+# ================================================================
+groups:
+
+  - name: krishimitra_business
+    interval: 5m
+    rules:
+
+      - alert: AgmarknetIngestionFailed
+        expr: |
+          time() - krishimitra_last_agmarknet_ingest_timestamp_seconds > 86400
+        for: 10m
+        labels:
+          severity: critical
+          team:     data
+        annotations:
+          summary:     "Agmarknet price ingestion has not run in 24+ hours"
+          description: "Farmers are seeing stale price data. Check ingestion scheduler."
+
+      - alert: PricePredictionStale
+        expr: |
+          time() - krishimitra_last_prediction_generated_timestamp_seconds > 7200
+        for: 15m
+        labels:
+          severity: warning
+          team:     ml
+        annotations:
+          summary:     "Price predictions are > 2 hours old"
+          description: "ML predictions may be stale. Check the ML engine health."
+
+      - alert: HighAlertVolume
+        expr: |
+          increase(krishimitra_alerts_created_total[1h]) > 500
+        for: 0m
+        labels:
+          severity: info
+          team:     product
+        annotations:
+          summary:     "Unusually high alert volume (>500/hr)"
+          description: "{{ $value }} alerts created in the last hour — possible price spike event."
+
+      - alert: ChatErrorRateHigh
+        expr: |
+          rate(krishimitra_requests_total{model=~".*",status="error"}[10m]) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+          team:     ml
+        annotations:
+          summary:     "AI chat error rate > 20%"
+          description: "Farmers are experiencing AI assistant failures."
+
+---
+# ================================================================
+#  Infrastructure Alert Rules
+# ================================================================
+groups:
+
+  - name: krishimitra_infra
+    interval: 30s
+    rules:
+
+      - alert: HostCpuHigh
+        expr: |
+          100 - (avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
+        labels:
+          severity: warning
+          team:     infra
+        annotations:
+          summary:     "Host CPU usage > 85%"
+          description: "{{ $labels.instance }} CPU at {{ $value | humanize }}%."
+
+      - alert: HostDiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.10
+        for: 5m
+        labels:
+          severity: critical
+          team:     infra
+        annotations:
+          summary:     "Disk space < 10% remaining"
+          description: "{{ $labels.instance }} has only {{ $value | humanizePercentage }} disk space left."
+
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team:     infra
+        annotations:
+          summary:     "PostgreSQL is DOWN"
+          description: "Database unavailable — backend will start returning 500s."
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team:     infra
+        annotations:
+          summary:     "Redis is DOWN"
+          description: "Cache unavailable — all prices served from database, latency will spike."
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          team:     infra
+        annotations:
+          summary:     "Redis memory > 85%"
+          description: "Redis at {{ $value | humanizePercentage }} memory — eviction may start."
+
+      - alert: ContainerRestarting
+        expr: |
+          increase(container_last_seen[10m]) < 1
+          AND on(name) label_replace(
+            rate(container_start_time_seconds[10m]) > 0,
+            "name","$1","container_label_com_docker_compose_service","(.*)"
+          )
+        for: 0m
+        labels:
+          severity: warning
+          team:     infra
+        annotations:
+          summary:     "Container {{ $labels.name }} is restarting"
+          description: "Container crash-looping detected."
