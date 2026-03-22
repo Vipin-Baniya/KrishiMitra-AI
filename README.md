@@ -5,6 +5,12 @@ Answers: **What crop to grow? When to sell? At what price?**
 
 ---
 
+## Deployment Guide
+
+For a full step-by-step free deployment guide (local, Oracle Cloud, or Render), see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+
+---
+
 ## Quick Start (everything in one command)
 
 ```bash
