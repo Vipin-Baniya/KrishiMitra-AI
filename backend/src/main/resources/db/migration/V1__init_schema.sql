@@ -123,7 +123,7 @@ CREATE TABLE price_predictions (
 );
 
 CREATE UNIQUE INDEX idx_predictions_mandi_commodity_day
-    ON price_predictions(mandi_id, commodity, DATE(generated_at));
+    ON price_predictions(mandi_id, commodity, (generated_at::date));
 
 CREATE INDEX idx_predictions_mandi_commodity ON price_predictions(mandi_id, commodity, generated_at DESC);
 
