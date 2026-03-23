@@ -4,6 +4,7 @@ import com.krishimitra.client.LlmClient;
 import static com.krishimitra.client.LlmClient.LlmRequest;
 import static com.krishimitra.client.LlmClient.LlmResponse;
 import com.krishimitra.dto.*;
+import com.krishimitra.exception.ApiException;
 import com.krishimitra.mapper.FarmerMapper;
 import com.krishimitra.model.entity.*;
 import com.krishimitra.monitoring.KrishiMitraMetrics;
@@ -49,10 +50,10 @@ public class AiChatService {
         long start = System.currentTimeMillis();
 
         Farmer farmer = farmerRepo.findById(farmerId)
-                .orElseThrow(() -> new ApiException("Farmer not found", 404));
+                .orElseThrow(() -> ApiException.notFound("Farmer not found"));
 
         // Resolve or create session
-        ChatSession session = resolveSession(req.getSessionId(), farmer);
+        ChatSession session = resolveSession(req.sessionId() != null ? req.sessionId().toString() : null, farmer);
 
         // Load conversation history for context
         List<ChatMessage> history = messageRepo.findLastNMessages(session.getId(), CONTEXT_WINDOW_MSGS);
@@ -61,7 +62,7 @@ public class AiChatService {
         String systemContext = buildSystemContext(farmer);
 
         // Convert history to LLM message format
-        List<LlmMessage> llmMessages = buildLlmMessages(systemContext, history, req.getMessage(), req.getLanguage());
+        List<LlmMessage> llmMessages = buildLlmMessages(systemContext, history, req.message(), req.language());
 
         // Call LLM router
         // Build messages as List<Map<String,String>> to match LlmClient.LlmRequest
@@ -71,7 +72,7 @@ public class AiChatService {
 
         LlmResponse llmResp = llmClient.chat(new LlmRequest(
                 msgMaps,
-                req.getLanguage() != null ? req.getLanguage() : farmer.getPreferredLang(),
+                req.language() != null ? req.language() : farmer.getPreferredLang(),
                 null,
                 800,
                 0.4
@@ -83,16 +84,16 @@ public class AiChatService {
         messageRepo.save(ChatMessage.builder()
                 .session(session)
                 .role("user")
-                .content(req.getMessage())
+                .content(req.message())
                 .build());
 
         // Persist assistant message
         messageRepo.save(ChatMessage.builder()
                 .session(session)
                 .role("assistant")
-                .content(llmResp.getContent())
-                .modelUsed(llmResp.getModelUsed())
-                .tokensUsed(llmResp.getTokensUsed())
+                .content(llmResp.content())
+                .modelUsed(llmResp.modelUsed())
+                .tokensUsed(llmResp.tokensUsed())
                 .latencyMs((int) latencyMs)
                 .build());
 
@@ -102,22 +103,22 @@ public class AiChatService {
 
         // Metrics
         metrics.recordChatMessage(
-                req.getLanguage() != null ? req.getLanguage() : farmer.getPreferredLang(),
-                llmResp.getModelUsed(),
+                req.language() != null ? req.language() : farmer.getPreferredLang(),
+                llmResp.modelUsed(),
                 latencyMs
         );
 
         log.debug("Chat response: sessionId={} model={} latency={}ms",
-                session.getId(), llmResp.getModelUsed(), latencyMs);
+                session.getId(), llmResp.modelUsed(), latencyMs);
 
-        return ChatResponse.builder()
-                .sessionId(session.getId().toString())
-                .content(llmResp.getContent())
-                .modelUsed(llmResp.getModelUsed())
-                .confidence(llmResp.getConfidence())
-                .latencyMs(latencyMs)
-                .createdAt(Instant.now().toString())
-                .build();
+        return new ChatResponse(
+                session.getId(),
+                llmResp.content(),
+                llmResp.modelUsed(),
+                llmResp.confidence(),
+                latencyMs,
+                Instant.now()
+        );
     }
 
     @Transactional(readOnly = true)

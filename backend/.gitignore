@@ -1,0 +1,18 @@
+# Maven build output
+target/
+
+# IDE files
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Spring Boot local config
+application-local.properties
+application-local.yml
+*.env
