@@ -1,0 +1,161 @@
+{{/*
+  KrishiMitra LLM Server — Kubernetes Deployment
+  Includes: Deployment, Service, PDB, ServiceMonitor
+*/}}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-llm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-llm
+    version: {{ .Values.image.tag | quote }}
+    environment: {{ .Values.environment }}
+spec:
+  replicas: {{ .Values.replicaCount.llm }}
+  selector:
+    matchLabels:
+      app: krishimitra-llm
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge:       1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app:     krishimitra-llm
+        version: {{ .Values.image.tag | quote }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path:   /metrics
+        prometheus.io/port:   "8001"
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ .Release.Name }}-llm
+      securityContext:
+        runAsNonRoot: true
+        runAsUser:    1001
+        runAsGroup:   1001
+        fsGroup:      1001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      automountServiceAccountToken: false
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: llm-server
+          image: {{ .Values.global.imageRegistry }}/{{ .Values.global.imageOwner }}/krishimitra-llm:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem:   true
+            runAsNonRoot:             true
+            runAsUser:                1001
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          ports:
+            - name: http
+              containerPort: 8001
+          env:
+            - name: REDIS_HOST
+              value: {{ .Values.redis.host }}
+            - name: REDIS_PORT
+              value: {{ .Values.redis.port | quote }}
+            - name: REDIS_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: redis-password
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: openai-api-key
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: anthropic-api-key
+                  optional: true
+          resources:
+            {{- toYaml .Values.resources.llm | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            failureThreshold: 30
+            periodSeconds:    5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 0
+            periodSeconds:       15
+            failureThreshold:    3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 0
+            periodSeconds:       5
+            failureThreshold:    3
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-llm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-llm
+spec:
+  selector:
+    app: krishimitra-llm
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-llm-pdb
+  namespace: {{ .Release.Namespace }}
+spec:
+  maxUnavailable: {{ .Values.podDisruptionBudget.llm.maxUnavailable }}
+  selector:
+    matchLabels:
+      app: krishimitra-llm
+
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-llm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: krishimitra-llm
+  endpoints:
+    - port:     http
+      path:     /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+{{- end }}

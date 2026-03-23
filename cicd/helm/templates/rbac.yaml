@@ -1,0 +1,156 @@
+{{/*
+  KrishiMitra — RBAC resources
+  Creates a dedicated ServiceAccount, Role, and RoleBinding for each service.
+  Each service gets only the Kubernetes API access it strictly needs (least-privilege).
+*/}}
+
+{{- $services := list "backend" "ml" "llm" "frontend" }}
+{{- range $services }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $.Release.Name }}-{{ . }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app: krishimitra-{{ . }}
+  annotations:
+    # Prevent automatic token mounting; explicit volumeMount is used where needed
+    kubernetes.io/enforce-mountable-secrets: "true"
+automountServiceAccountToken: false
+{{- end }}
+
+---
+# Role for the backend service: allowed to read its own ConfigMap and Secret
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-backend
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["{{ .Release.Name }}-config"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["{{ .Values.secrets.existingSecret }}"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-backend
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-backend
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ .Release.Name }}-backend
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Role for the ML engine: read-only access to its ConfigMap
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-ml
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-ml
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["{{ .Release.Name }}-config"]
+    verbs: ["get", "watch", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-ml
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-ml
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-ml
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ .Release.Name }}-ml
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Role for the LLM server: read-only access to its ConfigMap and API key secrets
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-llm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-llm
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["{{ .Release.Name }}-config"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["{{ .Values.secrets.existingSecret }}"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-llm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-llm
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-llm
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ .Release.Name }}-llm
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Role for the frontend: no Kubernetes API access needed.
+# An explicit empty Role + RoleBinding is created so that the frontend
+# ServiceAccount has a well-defined, auditable RBAC posture (no implicit
+# cluster-level bindings) and can be referenced in NetworkPolicies / OPA rules.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-frontend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-frontend
+rules: []   # empty — frontend only serves static files; no K8s API access required
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-frontend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-frontend
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-frontend
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ .Release.Name }}-frontend
+  apiGroup: rbac.authorization.k8s.io
