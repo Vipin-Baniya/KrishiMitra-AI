@@ -119,9 +119,11 @@ CREATE TABLE price_predictions (
     confidence      DECIMAL(5,4),
     model_weights   JSONB,
     explanation     JSONB,
-    expires_at      TIMESTAMPTZ  NOT NULL,
-    UNIQUE (mandi_id, commodity, DATE(generated_at))
+    expires_at      TIMESTAMPTZ  NOT NULL
 );
+
+CREATE UNIQUE INDEX idx_predictions_mandi_commodity_day
+    ON price_predictions(mandi_id, commodity, DATE(generated_at));
 
 CREATE INDEX idx_predictions_mandi_commodity ON price_predictions(mandi_id, commodity, generated_at DESC);
 
