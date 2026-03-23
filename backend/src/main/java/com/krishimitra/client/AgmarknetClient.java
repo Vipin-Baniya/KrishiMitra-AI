@@ -45,6 +45,7 @@ public class AgmarknetClient {
         int offset = 0, limit = 100;
 
         while (true) {
+            int currentOffset = offset;
             var params = buildParams(commodity, state, fromDate, toDate, offset, limit);
             AgmarknetResponse resp = webClient.get()
                     .uri(uriBuilder -> {
@@ -55,7 +56,7 @@ public class AgmarknetClient {
                     .bodyToMono(AgmarknetResponse.class)
                     .timeout(Duration.ofSeconds(30))
                     .retryWhen(Retry.backoff(2, Duration.ofSeconds(2)))
-                    .doOnError(e -> log.warn("Agmarknet API error (offset={}): {}", offset, e.getMessage()))
+                    .doOnError(e -> log.warn("Agmarknet API error (offset={}): {}", currentOffset, e.getMessage()))
                     .onErrorReturn(new AgmarknetResponse(List.of(), 0))
                     .block();
 

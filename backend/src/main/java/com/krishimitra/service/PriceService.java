@@ -107,7 +107,29 @@ public class PriceService {
         // (actual persist would parse the ML response JSON — omitted for brevity,
         //  handled in PredictionPersistenceService)
 
-        return mlResult.withLatency(System.currentTimeMillis() - start, false);
+        long latencyMs = System.currentTimeMillis() - start;
+        return new PriceForecastResponse(
+                mlResult.commodity(),
+                mlResult.mandi(),
+                mlResult.currentPrice(),
+                mlResult.forecastDate(),
+                mlResult.horizons(),
+                mlResult.pointForecast(),
+                mlResult.lower80(),
+                mlResult.upper80(),
+                mlResult.lower95(),
+                mlResult.upper95(),
+                mlResult.sellDecision(),
+                mlResult.waitDays(),
+                mlResult.peakDay(),
+                mlResult.peakPrice(),
+                mlResult.profitGain(),
+                mlResult.confidence(),
+                mlResult.explanation(),
+                mlResult.modelWeights(),
+                false,
+                latencyMs
+        );
     }
 
     public List<MandiRankResponse> rankMandis(
@@ -157,43 +179,41 @@ public class PriceService {
         com.fasterxml.jackson.databind.ObjectMapper om =
                 new com.fasterxml.jackson.databind.ObjectMapper();
         try {
-            java.util.List<Integer> horizons =
-                    om.readValue(p.getHorizonsJson() != null ? p.getHorizonsJson() : "[]",
+            java.util.List<BigDecimal> forecast =
+                    om.readValue(p.getPointForecast() != null ? p.getPointForecast() : "[]",
                             new com.fasterxml.jackson.core.type.TypeReference<>() {});
-            java.util.List<Double> forecast =
-                    om.readValue(p.getForecastJson() != null ? p.getForecastJson() : "[]",
+            java.util.List<BigDecimal> lo80 =
+                    om.readValue(p.getLower80() != null ? p.getLower80() : "[]",
                             new com.fasterxml.jackson.core.type.TypeReference<>() {});
-            java.util.List<Double> lo80 =
-                    om.readValue(p.getLower80Json() != null ? p.getLower80Json() : "[]",
+            java.util.List<BigDecimal> hi80 =
+                    om.readValue(p.getUpper80() != null ? p.getUpper80() : "[]",
                             new com.fasterxml.jackson.core.type.TypeReference<>() {});
-            java.util.List<Double> hi80 =
-                    om.readValue(p.getUpper80Json() != null ? p.getUpper80Json() : "[]",
+            java.util.List<BigDecimal> lo95 =
+                    om.readValue(p.getLower95() != null ? p.getLower95() : "[]",
                             new com.fasterxml.jackson.core.type.TypeReference<>() {});
-            java.util.List<Double> lo95 =
-                    om.readValue(p.getLower95Json() != null ? p.getLower95Json() : "[]",
+            java.util.List<BigDecimal> hi95 =
+                    om.readValue(p.getUpper95() != null ? p.getUpper95() : "[]",
                             new com.fasterxml.jackson.core.type.TypeReference<>() {});
-            java.util.List<Double> hi95 =
-                    om.readValue(p.getUpper95Json() != null ? p.getUpper95Json() : "[]",
-                            new com.fasterxml.jackson.core.type.TypeReference<>() {});
-            return PriceForecastResponse.builder()
-                    .commodity(p.getCommodity())
-                    .mandi(p.getMandi() != null ? p.getMandi().getName() : "")
-                    .currentPrice(p.getCurrentPrice() != null ? p.getCurrentPrice().doubleValue() : 0)
-                    .forecastDate(p.getForecastDate() != null ? p.getForecastDate().toString() : "")
-                    .horizons(horizons)
-                    .pointForecast(forecast)
-                    .lower80(lo80).upper80(hi80)
-                    .lower95(lo95).upper95(hi95)
-                    .sellDecision(p.getSellDecision())
-                    .waitDays(p.getWaitDays() != null ? p.getWaitDays() : 0)
-                    .peakDay(p.getPeakDay() != null ? p.getPeakDay() : 0)
-                    .peakPrice(p.getPeakPrice() != null ? p.getPeakPrice().doubleValue() : 0)
-                    .profitGain(p.getProfitGain() != null ? p.getProfitGain().doubleValue() : 0)
-                    .confidence(p.getConfidenceScore() != null ? p.getConfidenceScore() : 0.0)
-                    .explanation(null)
-                    .fromCache(fromCache)
-                    .latencyMs(latencyMs)
-                    .build();
+            return new PriceForecastResponse(
+                    p.getCommodity(),
+                    p.getMandi() != null ? p.getMandi().getName() : "",
+                    p.getCurrentPrice(),
+                    p.getGeneratedAt() != null ? p.getGeneratedAt().toString() : "",
+                    null,
+                    forecast,
+                    lo80, hi80,
+                    lo95, hi95,
+                    p.getSellDecision(),
+                    p.getWaitDays() != null ? p.getWaitDays() : 0,
+                    p.getPeakDay() != null ? p.getPeakDay() : 0,
+                    p.getPeakPrice(),
+                    p.getProfitGain(),
+                    p.getConfidence() != null ? p.getConfidence().doubleValue() : 0.0,
+                    null,
+                    null,
+                    fromCache,
+                    latencyMs
+            );
         } catch (Exception e) {
             log.error("Failed to deserialise prediction JSON: {}", e.getMessage());
             return null;

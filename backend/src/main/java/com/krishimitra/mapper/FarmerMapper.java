@@ -13,7 +13,7 @@ public interface FarmerMapper {
     FarmerProfileResponse toDto(Farmer farmer);
 
     @Mapping(target = "id",          ignore = true)
-    @Mapping(target = "password",    ignore = true)
+    @Mapping(target = "passwordHash", ignore = true)
     @Mapping(target = "createdAt",   ignore = true)
     @Mapping(target = "updatedAt",   ignore = true)
     @Mapping(target = "alerts",      ignore = true)

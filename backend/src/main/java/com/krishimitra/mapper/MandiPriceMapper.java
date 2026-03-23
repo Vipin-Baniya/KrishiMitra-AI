@@ -32,11 +32,10 @@ public interface MandiPriceMapper {
         return cmp > 0 ? "UP" : cmp < 0 ? "DOWN" : "FLAT";
     }
 
-    default double computeChangePct(MandiPrice p) {
-        if (p.getPrevModalPrice() == null || p.getPrevModalPrice().compareTo(BigDecimal.ZERO) == 0) return 0.0;
+    default BigDecimal computeChangePct(MandiPrice p) {
+        if (p.getPrevModalPrice() == null || p.getPrevModalPrice().compareTo(BigDecimal.ZERO) == 0) return BigDecimal.ZERO;
         return p.getModalPrice().subtract(p.getPrevModalPrice())
                 .divide(p.getPrevModalPrice(), 4, java.math.RoundingMode.HALF_UP)
-                .multiply(BigDecimal.valueOf(100))
-                .doubleValue();
+                .multiply(BigDecimal.valueOf(100));
     }
 }

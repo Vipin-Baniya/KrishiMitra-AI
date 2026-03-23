@@ -39,11 +39,9 @@ public class AiChatController {
 
     @GetMapping("/sessions")
     @Operation(summary = "List the farmer's recent chat sessions")
-    public ResponseEntity<ApiResponse<List<ChatSessionDto>>> getSessions(
+    public ResponseEntity<ApiResponse<List<com.krishimitra.dto.ChatSessionResponse>>> getSessions(
             @AuthenticationPrincipal FarmerPrincipal principal) {
         return ResponseEntity.ok(ApiResponse.ok(
                 chatService.getSessions(principal.farmerId())));
     }
-
-    public record ChatSessionDto(UUID id, String lastMessage, String createdAt) {}
 }
