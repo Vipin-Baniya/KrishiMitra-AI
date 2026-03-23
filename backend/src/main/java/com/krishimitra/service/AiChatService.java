@@ -4,6 +4,7 @@ import com.krishimitra.client.LlmClient;
 import static com.krishimitra.client.LlmClient.LlmRequest;
 import static com.krishimitra.client.LlmClient.LlmResponse;
 import com.krishimitra.dto.*;
+import com.krishimitra.exception.ApiException;
 import com.krishimitra.mapper.FarmerMapper;
 import com.krishimitra.model.entity.*;
 import com.krishimitra.monitoring.KrishiMitraMetrics;
@@ -49,7 +50,7 @@ public class AiChatService {
         long start = System.currentTimeMillis();
 
         Farmer farmer = farmerRepo.findById(farmerId)
-                .orElseThrow(() -> new ApiException("Farmer not found", 404));
+                .orElseThrow(() -> ApiException.notFound("Farmer not found"));
 
         // Resolve or create session
         ChatSession session = resolveSession(req.getSessionId(), farmer);
