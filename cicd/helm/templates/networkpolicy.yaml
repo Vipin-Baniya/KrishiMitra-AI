@@ -1,0 +1,243 @@
+{{/*
+  KrishiMitra — NetworkPolicies
+  Implements default-deny with explicit allow rules per service.
+  Principle: each pod may only receive traffic from the specific peers that legitimately call it.
+*/}}
+
+{{- if .Values.networkPolicy.enabled }}
+
+# ── Default deny-all for the namespace ────────────────────────────────────────
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-default-deny
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/part-of: krishimitra
+spec:
+  podSelector: {}      # matches ALL pods in the namespace
+  policyTypes:
+    - Ingress
+    - Egress
+
+# ── Backend ───────────────────────────────────────────────────────────────────
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-backend-netpol
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-backend
+spec:
+  podSelector:
+    matchLabels:
+      app: krishimitra-backend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Accept traffic from the ingress-nginx controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Accept scraping from Prometheus
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # DNS (kube-dns)
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # PostgreSQL
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.postgresql.port }}
+    # Redis
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.redis.port }}
+    # Kafka
+    - ports:
+        - protocol: TCP
+          port: 9092
+    # ML engine (internal)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: krishimitra-ml
+      ports:
+        - protocol: TCP
+          port: 8003
+    # LLM server (internal)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: krishimitra-llm
+      ports:
+        - protocol: TCP
+          port: 8001
+    # External HTTPS for optional AI APIs (OpenAI, Anthropic)
+    - ports:
+        - protocol: TCP
+          port: 443
+
+# ── ML Engine ─────────────────────────────────────────────────────────────────
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-ml-netpol
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-ml
+spec:
+  podSelector:
+    matchLabels:
+      app: krishimitra-ml
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Accept calls from the backend only
+    - from:
+        - podSelector:
+            matchLabels:
+              app: krishimitra-backend
+      ports:
+        - protocol: TCP
+          port: 8003
+    # Prometheus scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8003
+  egress:
+    # DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # PostgreSQL (read market data / write forecasts)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.postgresql.port }}
+    # Redis (cache)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.redis.port }}
+
+# ── LLM Server ────────────────────────────────────────────────────────────────
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-llm-netpol
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-llm
+spec:
+  podSelector:
+    matchLabels:
+      app: krishimitra-llm
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Accept calls from the backend only
+    - from:
+        - podSelector:
+            matchLabels:
+              app: krishimitra-backend
+      ports:
+        - protocol: TCP
+          port: 8001
+    # Prometheus scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8001
+  egress:
+    # DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # External HTTPS for OpenAI / Anthropic fallback
+    - ports:
+        - protocol: TCP
+          port: 443
+    # Redis (conversation context cache)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.redis.port }}
+
+# ── Frontend ──────────────────────────────────────────────────────────────────
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-frontend-netpol
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: krishimitra-frontend
+spec:
+  podSelector:
+    matchLabels:
+      app: krishimitra-frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Accept traffic from ingress-nginx only
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80
+  egress:
+    # DNS only — nginx serves static files; API calls are proxied by ingress
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+{{- end }}

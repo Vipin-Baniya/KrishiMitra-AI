@@ -97,6 +97,36 @@ podDisruptionBudget:
     maxUnavailable: 1
   ml:
     maxUnavailable: 1
+  llm:
+    maxUnavailable: 1
+  frontend:
+    maxUnavailable: 1
+
+# ── Network policies ──────────────────────────────────────────
+networkPolicy:
+  enabled:             true
+  # Namespace where ingress-nginx controller runs
+  ingressNamespace:    ingress-nginx
+  # Namespace where Prometheus/monitoring stack runs
+  monitoringNamespace: monitoring
+
+# ── Pod security contexts ─────────────────────────────────────
+# Container-level overrides are hardcoded in each template;
+# pod-level defaults are shown here for documentation purposes.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser:    1001
+  runAsGroup:   1001
+  fsGroup:      1001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem:   true
+  runAsNonRoot:             true
+  capabilities:
+    drop: [ALL]
 
 # ── Node affinity ─────────────────────────────────────────────
 nodeSelector: {}

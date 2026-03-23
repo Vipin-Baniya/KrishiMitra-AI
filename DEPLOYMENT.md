@@ -10,12 +10,14 @@ A complete, step-by-step guide to deploy the full KrishiMitra AI platform **at z
 2. [Prerequisites](#2-prerequisites)
 3. [Option A — Local Deployment (Docker Compose)](#3-option-a--local-deployment-docker-compose)
 4. [Option B — Oracle Cloud Always-Free VM](#4-option-b--oracle-cloud-always-free-vm)
-5. [Option C — Render + Supabase + Upstash (Managed Free Tier)](#5-option-c--render--supabase--upstash-managed-free-tier)
-6. [Free API Keys](#6-free-api-keys)
-7. [Environment Variable Reference](#7-environment-variable-reference)
-8. [Monitoring Stack](#8-monitoring-stack)
-9. [CI/CD with GitHub Actions](#9-cicd-with-github-actions)
-10. [Troubleshooting](#10-troubleshooting)
+5. [Option B2 — Azure VM Deployment](#5-option-b2--azure-vm-deployment)
+6. [Option C — Render + Supabase + Upstash (Managed Free Tier)](#6-option-c--render--supabase--upstash-managed-free-tier)
+7. [Free API Keys](#7-free-api-keys)
+8. [Environment Variable Reference](#8-environment-variable-reference)
+9. [Monitoring Stack](#9-monitoring-stack)
+10. [CI/CD with GitHub Actions](#10-cicd-with-github-actions)
+11. [Kubernetes Security Features](#11-kubernetes-security-features)
+12. [Troubleshooting](#12-troubleshooting)
 
 ---
 
@@ -378,7 +380,160 @@ sudo systemctl start krishimitra
 
 ---
 
-## 5. Option C — Render + Supabase + Upstash (Managed Free Tier)
+## 5. Option B2 — Azure VM Deployment
+
+This option mirrors Option B but uses **Microsoft Azure** instead of Oracle Cloud.  
+It is ideal if you already have an Azure subscription or receive free Azure credits (e.g., Azure for Students gives $100/year).
+
+### Step 1 — Create an Azure VM
+
+1. Log in to the [Azure Portal](https://portal.azure.com).
+2. Navigate to **Virtual Machines → Create → Azure virtual machine**.
+3. Configure:
+   - **Image:** Ubuntu Server 22.04 LTS
+   - **Size:** Standard_B2s (2 vCPUs, 4 GB RAM) or larger for the full stack
+   - **Authentication type:** SSH public key
+   - Upload your public key or let Azure generate a key pair (download the `.pem` file)
+4. Under **Networking**, ensure a **public IP** is assigned.
+5. Click **Review + create → Create**.
+6. Note the **Public IP address** from the VM overview page.
+
+The default admin username for Azure Ubuntu VMs is **`azureuser`**.
+
+### Step 2 — Open required firewall ports
+
+In the Azure Portal, go to your VM → **Networking → Add inbound port rule**:
+
+| Protocol | Port | Description |
+|----------|------|-------------|
+| TCP | 22 | SSH |
+| TCP | 80 | HTTP (frontend) |
+| TCP | 443 | HTTPS (frontend) |
+| TCP | 8080 | Backend API (optional) |
+| TCP | 3001 | Grafana (optional) |
+| TCP | 9090 | Prometheus (optional) |
+
+### Step 3 — SSH into the VM
+
+```bash
+# Replace with your key file path and VM public IP
+ssh -i ~/.ssh/your-key.pem azureuser@<YOUR_PUBLIC_IP>
+```
+
+> **Tip:** Make sure the key file has the correct permissions:
+> ```bash
+> chmod 600 ~/.ssh/your-key.pem
+> ```
+
+### Step 4 — Install Docker
+
+```bash
+# Update system packages
+sudo apt-get update && sudo apt-get upgrade -y
+
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker azureuser
+
+# Apply group change without logging out
+newgrp docker
+
+# Verify
+docker --version
+docker compose version
+```
+
+### Step 5 — Clone and configure the repository
+
+```bash
+git clone https://github.com/Vipin-Baniya/KrishiMitra-AI.git
+cd KrishiMitra-AI
+cp .env.example .env
+nano .env   # fill in JWT_SECRET and database passwords
+```
+
+### Step 6 — Start the stack
+
+```bash
+cd integration
+docker compose -f docker-compose.full.yml up -d
+```
+
+### Step 7 — Verify
+
+```bash
+docker compose -f docker-compose.full.yml ps
+curl http://localhost:8080/actuator/health
+```
+
+### Step 8 — Auto-start on reboot
+
+```bash
+sudo nano /etc/systemd/system/krishimitra.service
+```
+
+Paste:
+
+```ini
+[Unit]
+Description=KrishiMitra AI Stack
+After=docker.service
+Requires=docker.service
+
+[Service]
+WorkingDirectory=/home/azureuser/KrishiMitra-AI/integration
+ExecStart=/usr/bin/docker compose -f docker-compose.full.yml up
+ExecStop=/usr/bin/docker compose -f docker-compose.full.yml down
+Restart=always
+RestartSec=10
+User=azureuser
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable krishimitra
+sudo systemctl start krishimitra
+```
+
+### Auto-deploy via GitHub Actions (Azure VM)
+
+Add the following job to `cicd/github-actions/ci-cd.yml` to SSH-deploy to your Azure VM:
+
+```yaml
+deploy-azure-vm:
+  name: "Deploy → Azure VM"
+  runs-on: ubuntu-latest
+  needs: [docker-build]
+  if: github.ref == 'refs/heads/main'
+  steps:
+    - name: Deploy via SSH
+      uses: appleboy/ssh-action@v1
+      with:
+        host:     ${{ secrets.AZURE_VM_HOST }}
+        username: azureuser
+        key:      ${{ secrets.AZURE_VM_SSH_KEY }}
+        script: |
+          cd ~/KrishiMitra-AI
+          git pull origin main
+          cd integration
+          docker compose -f docker-compose.full.yml pull
+          docker compose -f docker-compose.full.yml up -d --remove-orphans
+          docker image prune -f
+```
+
+Add these secrets to your GitHub repository:
+
+| Secret | Value |
+|--------|-------|
+| `AZURE_VM_HOST` | Azure VM public IP address |
+| `AZURE_VM_SSH_KEY` | Contents of your private SSH key (PEM format) |
+
+---
+
+## 6. Option C — Render + Supabase + Upstash (Managed Free Tier)
 
 This option uses fully-managed free cloud services for each component.  
 It requires no VM but has more limited compute (CPU/RAM throttled on free tiers).
@@ -457,7 +612,7 @@ The backend is accessible at `https://krishimitra-backend.onrender.com/swagger-u
 
 ---
 
-## 6. Free API Keys
+## 7. Free API Keys
 
 The platform works without any external API keys. External APIs are **optional fallbacks**.
 
@@ -503,7 +658,7 @@ Used as the emergency LLM fallback only.
 
 ---
 
-## 7. Environment Variable Reference
+## 8. Environment Variable Reference
 
 Below is the complete list of environment variables with their default values and descriptions.  
 Minimum required variables are marked **Required**.
@@ -557,7 +712,7 @@ IMAGE_TAG=latest
 
 ---
 
-## 8. Monitoring Stack
+## 9. Monitoring Stack
 
 The monitoring stack (Prometheus + Grafana + Loki + Alertmanager) is included in the main  
 `docker-compose.full.yml`. It can also be started separately:
@@ -602,7 +757,7 @@ cd monitoring && ./setup.sh backup
 
 ---
 
-## 9. CI/CD with GitHub Actions
+## 10. CI/CD with GitHub Actions
 
 GitHub Actions is **free for public repositories** and provides 2,000 free minutes/month for private repositories.
 
@@ -687,7 +842,76 @@ Add these secrets to your GitHub repository:
 
 ---
 
-## 10. Troubleshooting
+## 11. Kubernetes Security Features
+
+The KrishiMitra Helm chart enforces a defence-in-depth security posture across all Kubernetes workloads.  
+The following sections describe each layer.
+
+### Pod and container security contexts
+
+Every pod and container is hardened at the Kubernetes API level:
+
+| Setting | Value | Rationale |
+|---------|-------|-----------|
+| `runAsNonRoot` | `true` | Prevents containers from running as root |
+| `runAsUser` / `runAsGroup` | `1001` | Dedicated non-privileged UID/GID |
+| `fsGroup` | `1001` | Volume mounts owned by the app group |
+| `allowPrivilegeEscalation` | `false` | Blocks `setuid` / `sudo`-style escalation |
+| `readOnlyRootFilesystem` | `true` | Prevents filesystem tampering; writable paths use `emptyDir` volumes |
+| `capabilities.drop` | `[ALL]` | Drops every Linux capability; add back only if strictly required |
+| `seccompProfile.type` | `RuntimeDefault` | Enables the container runtime's default syscall filter |
+| `automountServiceAccountToken` | `false` | Prevents automatic credential injection unless explicitly needed |
+
+### Role-Based Access Control (RBAC)
+
+Each service runs under its own dedicated `ServiceAccount` and is granted only the Kubernetes API permissions it needs:
+
+| Service | Allowed resources | Allowed verbs |
+|---------|------------------|---------------|
+| `backend` | ConfigMap (`krishimitra-config`), Secret (`krishimitra-secrets`) | `get`, `watch`, `list` / `get` |
+| `ml-engine` | ConfigMap (`krishimitra-config`) | `get`, `watch`, `list` |
+| `llm-server` | ConfigMap (`krishimitra-config`), Secret (`krishimitra-secrets`) | `get`, `watch`, `list` / `get` |
+| `frontend` | *(none — empty Role)* | — |
+
+### NetworkPolicies
+
+A **default-deny** NetworkPolicy blocks all ingress and egress in the `krishimitra` namespace.  
+Explicit allow rules are then added for each service:
+
+| Source | Destination | Port | Rationale |
+|--------|-------------|------|-----------|
+| ingress-nginx | backend, frontend | 8080 / 80 | Public traffic entry-points |
+| Prometheus | all services | service port | Metrics scraping |
+| backend | ml-engine | 8003 | Forecast requests |
+| backend | llm-server | 8001 | AI chat requests |
+| backend, ml, llm | PostgreSQL | 5432 | Database access |
+| backend, ml, llm | Redis | 6379 | Cache access |
+| backend, llm | 443 | — | External AI API calls (OpenAI/Anthropic) |
+
+### Polaris policy-as-code scanning
+
+The CI/CD pipeline renders the Helm chart and passes the output through [Polaris](https://polaris.docs.fairwinds.com/) and Trivy.  
+Any **danger**-level violation (e.g., missing `readOnlyRootFilesystem`, privilege escalation) fails the build before images are pushed.  
+Configuration: `cicd/polaris-config.yaml`.
+
+### Enforcing Pod Security Standards
+
+Label the deployment namespace to enforce the **restricted** Pod Security Standard:
+
+```bash
+kubectl label namespace krishimitra \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/enforce-version=latest \
+  pod-security.kubernetes.io/warn=restricted \
+  pod-security.kubernetes.io/audit=restricted
+```
+
+> This label causes the Kubernetes API server to reject any pod that does not meet the restricted standard  
+> (non-root user, no privilege escalation, read-only root FS, etc.).
+
+---
+
+## 12. Troubleshooting
 
 ### Containers won't start — "JWT_SECRET env var is required"
 

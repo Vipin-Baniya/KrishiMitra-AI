@@ -1,0 +1,48 @@
+# KrishiMitra — Polaris policy-as-code configuration
+# https://polaris.docs.fairwinds.com/customization/checks/
+#
+# Enforces Kubernetes security best-practices as part of the CI/CD pipeline.
+# All "danger" checks must pass before Docker images are built or deployed.
+
+checks:
+  # ── Image hygiene ─────────────────────────────────────────────────────────
+  tagNotLatest:                   danger   # every image must use an explicit tag
+  pullPolicyNotAlways:            warning  # prefer IfNotPresent for determinism
+  imageRegistry:                  ignore   # we enforce GHCR via Helm values
+
+  # ── Host access ───────────────────────────────────────────────────────────
+  hostIPCSet:                     danger   # do not share host IPC namespace
+  hostPIDSet:                     danger   # do not share host PID namespace
+  hostNetworkSet:                 warning  # flag but allow (needed by some sidecars)
+  hostPortSet:                    warning  # prefer ClusterIP services
+
+  # ── Privilege escalation ──────────────────────────────────────────────────
+  notReadOnlyRootFilesystem:      danger   # all containers must use read-only FS
+  privilegeEscalationAllowed:     danger   # allowPrivilegeEscalation must be false
+  runAsRootAllowed:               danger   # runAsNonRoot must be true
+  runAsPrivileged:                danger   # privileged must be false
+
+  # ── Capabilities ──────────────────────────────────────────────────────────
+  dangerousCapabilities:          danger   # block SYS_ADMIN, NET_RAW, etc.
+  insecureCapabilities:           danger   # block AUDIT_WRITE, FOWNER, etc.
+  capabilityOrSecurityContextSet: warning  # all containers should drop ALL caps
+
+  # ── Resource management ───────────────────────────────────────────────────
+  cpuRequestsMissing:             danger
+  cpuLimitsMissing:               warning
+  memoryRequestsMissing:          danger
+  memoryLimitsMissing:            warning
+
+  # ── Health probes ─────────────────────────────────────────────────────────
+  livenessProbeMissing:           warning
+  readinessProbeMissing:          danger
+
+  # ── Misc ──────────────────────────────────────────────────────────────────
+  metadataAndNameMismatched:      ignore   # Helm release naming is intentional
+  priorityClassNotSet:            ignore
+  tlsSettingsMissing:             warning  # enforced at ingress level
+
+exemptions:
+  - controllerNames: []
+    rules:
+      - hostNetworkSet   # no global exemptions — handled per-check above
