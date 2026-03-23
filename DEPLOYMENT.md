@@ -399,10 +399,11 @@ It requires no VM but has more limited compute (CPU/RAM throttled on free tiers)
 1. Go to [supabase.com](https://supabase.com) → **Start your project** → sign in with GitHub.
 2. Click **New project**, fill in name and database password, choose the **India (ap-south-1)** region.
 3. Wait ~2 minutes for the project to provision.
-4. Go to **Project Settings → Database** and copy the **Connection string (URI)** — looks like:
+4. Go to **Project Settings → Database** → **Connection Pooling** and copy the **Pooler connection string** — looks like:
    ```
-   postgresql://postgres:<password>@db.<ref>.supabase.co:5432/postgres
+   postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres
    ```
+   > ⚠️ Use the **pooler URL (port 6543)**, not the direct connection (port 5432). The pooler is required for serverless/PaaS deployments.
 5. Go to **SQL Editor** and run the schema initialization:
    - Copy the contents of `integration/scripts/postgres-init.sql` and execute it.
 
@@ -426,8 +427,8 @@ It requires no VM but has more limited compute (CPU/RAM throttled on free tiers)
    | Key | Value |
    |-----|-------|
    | `JWT_SECRET` | `<generated with openssl rand -base64 64>` |
-   | `DB_URL` | `jdbc:postgresql://db.<ref>.supabase.co:5432/postgres` |
-   | `DB_USER` | `postgres` |
+   | `DB_URL` | `jdbc:postgresql://<pooler-host>:6543/postgres` (from Supabase → Connection Pooling) |
+   | `DB_USER` | `postgres.<ref>` (from Supabase → Connection Pooling) |
    | `DB_PASS` | `<your Supabase DB password>` |
    | `REDIS_HOST` | `<Upstash hostname>` |
    | `REDIS_PORT` | `<Upstash port>` |
