@@ -13,6 +13,7 @@ spring:
       connection-timeout: 30000
       idle-timeout: 600000
       max-lifetime: 1800000
+      initialization-fail-timeout: -1   # start pool lazily; don't fail if DB not yet available
 
   jpa:
     hibernate:
@@ -31,6 +32,8 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+    connect-retries: 10             # retry up to 10 times when DB not ready at startup
+    connect-retries-interval: 10    # wait 10 s between retries (100 s total window)
 
   # ── Redis ─────────────────────────────────────────────────
   data:
@@ -68,6 +71,8 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: "com.krishimitra.dto.*,com.krishimitra.kafka.*"
+    listener:
+      missing-topics-fatal: false   # don't fail startup if Kafka topics aren't created yet
     topics:
       price-updates: krishimitra.price-updates
       sell-alerts:   krishimitra.sell-alerts
