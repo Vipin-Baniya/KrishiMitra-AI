@@ -32,6 +32,8 @@ open http://localhost:3001   # Grafana (admin / krishimitra)
 open http://localhost:9090   # Prometheus
 ```
 
+
+
 ---
 
 ## Architecture
